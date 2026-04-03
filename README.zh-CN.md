@@ -167,7 +167,7 @@ gstack 不是一组工具的集合，而是一套流程。skills 按照一个 sp
 | `/investigate` | **Debugger** | 系统化做 root-cause debugging。铁律：不调查，就不修。追踪 data flow、验证假设，连续 3 次修复失败就停。 |
 | `/design-review` | **Designer Who Codes** | 先按 `/plan-design-review` 的同样标准审设计，再把发现的问题修掉。使用 atomic commits，并给出 before/after screenshots。 |
 | `/design-shotgun` | **Design Explorer** | 生成多个 AI 设计变体，在浏览器里打开对比板，让你一路迭代到确认方向。偏好记忆会逐渐偏向你的个人审美。 |
-| `/design-html` | **Design Engineer** | 接收 `/design-shotgun` 批准过的 mockup，并使用 Pretext 生成生产级 HTML。文本在窗口缩放时会真实重排，而不是被写死的高度撑坏。智能 API 路由会按设计类型选择合适的 Pretext patterns。支持 React/Svelte/Vue 框架检测。 |
+| `/design-html` | **Design Engineer** | 使用 Pretext 生成带计算式文本布局的生产级 HTML。既可以基于已批准的 mockup、CEO 计划、设计评审结果，也可以从零开始。文本在窗口缩放时会真实重排，容器高度会随内容自动调整。智能 API 路由会按设计类型选择合适的 Pretext patterns。支持 React/Svelte/Vue 框架检测。 |
 | `/qa` | **QA Lead** | 测试你的应用、找 bug、用 atomic commits 修掉，再重新验证。每个修复都会自动生成 regression tests。 |
 | `/qa-only` | **QA Reporter** | 方法论与 `/qa` 相同，但只报告，不改代码。输出纯 bug report。 |
 | `/cso` | **Chief Security Officer** | 用 OWASP Top 10 + STRIDE threat model 做安全审查。低噪声：排除 17 类 false positives、设置 8/10+ confidence gate、独立验证每一条 finding。每条 finding 都会附带具体 exploit scenario。 |
