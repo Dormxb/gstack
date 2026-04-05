@@ -18,6 +18,7 @@ import { generateConfidenceCalibration } from './confidence';
 import { generateInvokeSkill } from './composition';
 import { generateReviewArmy } from './review-army';
 import { generateDxFramework } from './dx';
+import { generateDefaultRoutingRules } from './personalization';
 
 export const RESOLVERS: Record<string, ResolverFn> = {
   SLUG_EVAL: generateSlugEval,
@@ -61,4 +62,5 @@ export const RESOLVERS: Record<string, ResolverFn> = {
   CHANGELOG_WORKFLOW: generateChangelogWorkflow,
   REVIEW_ARMY: generateReviewArmy,
   DX_FRAMEWORK: generateDxFramework,
+  DEFAULT_ROUTING_RULES: generateDefaultRoutingRules,
 };

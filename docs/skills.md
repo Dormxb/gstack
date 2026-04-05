@@ -1,3 +1,5 @@
+[English](skills.md) | [简体中文](skills.zh-CN.md)
+
 # Skill Deep Dives
 
 Detailed guides for every gstack skill — philosophy, workflow, and examples.

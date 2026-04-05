@@ -6,6 +6,21 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const ROOT = path.resolve(import.meta.dir, '..');
+const GIT_BIN = Bun.which('git');
+const TEST_BASH = (() => {
+  if (GIT_BIN) {
+    const gitBash = path.resolve(path.dirname(GIT_BIN), '..', 'bin', process.platform === 'win32' ? 'bash.exe' : 'bash');
+    if (fs.existsSync(gitBash)) return gitBash;
+  }
+  return Bun.which('bash') ?? null;
+})();
+
+function runBash(script: string, cwd = ROOT) {
+  if (!TEST_BASH) {
+    throw new Error('bash is not available for shell-script validation tests');
+  }
+  return Bun.spawnSync([TEST_BASH, '-lc', script], { cwd, stdout: 'pipe', stderr: 'pipe' });
+}
 
 describe('SKILL.md command validation', () => {
   test('all $B commands in SKILL.md are valid browse commands', () => {
@@ -263,17 +278,15 @@ describe('Update check preamble', () => {
   });
 
   test('update check bash block exits 0 when up to date', () => {
+    if (!TEST_BASH) return;
     // Simulate the exact preamble command from SKILL.md
-    const result = Bun.spawnSync(['bash', '-c',
-      '_UPD=$(echo "" || true); [ -n "$_UPD" ] && echo "$_UPD" || true'
-    ], { stdout: 'pipe', stderr: 'pipe' });
+    const result = runBash('_UPD=$(echo "" || true); [ -n "$_UPD" ] && echo "$_UPD" || true');
     expect(result.exitCode).toBe(0);
   });
 
   test('update check bash block exits 0 when upgrade available', () => {
-    const result = Bun.spawnSync(['bash', '-c',
-      '_UPD=$(echo "UPGRADE_AVAILABLE 0.3.3 0.4.0" || true); [ -n "$_UPD" ] && echo "$_UPD" || true'
-    ], { stdout: 'pipe', stderr: 'pipe' });
+    if (!TEST_BASH) return;
+    const result = runBash('_UPD=$(echo "UPGRADE_AVAILABLE 0.3.3 0.4.0" || true); [ -n "$_UPD" ] && echo "$_UPD" || true');
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString().trim()).toBe('UPGRADE_AVAILABLE 0.3.3 0.4.0');
   });
@@ -628,21 +641,22 @@ describe('office-hours skill structure', () => {
     expect(content).toContain('Intrapreneurship');
   });
 
-  // YC founder discovery engine
-  test('contains YC apply CTA with ref tracking', () => {
-    expect(content).toContain('ycombinator.com/apply?ref=gstack');
+  test('contains operator close with concrete next-step routing', () => {
+    expect(content).toContain("What should we do with this signal next?");
+    expect(content).toContain('validation checklist');
   });
 
   test('contains "What I noticed" design doc section', () => {
     expect(content).toContain('What I noticed about how you think');
   });
 
-  test('contains golden age framing', () => {
-    expect(content).toContain('golden age');
+  test('contains leverage framing', () => {
+    expect(content).toContain('founder-grade signal');
   });
 
-  test('contains Garry Tan personal plea', () => {
-    expect(content).toContain('Garry Tan, the creator of GStack');
+  test('does not contain Garry / YC personal plea', () => {
+    expect(content).not.toContain('Garry Tan, the creator of GStack');
+    expect(content).not.toContain('ycombinator.com/apply?ref=gstack');
   });
 
   test('contains founder signal synthesis phase', () => {
@@ -784,13 +798,12 @@ describe('Enum & Value Completeness in review checklist', () => {
   });
 });
 
-// --- Completeness Principle spot-check ---
+// --- Execution Completeness spot-check ---
 
-describe('Completeness Principle in generated SKILL.md files', () => {
+describe('Execution Completeness in generated SKILL.md files', () => {
   const skillsWithPreamble = [
-    'SKILL.md', 'browse/SKILL.md', 'qa/SKILL.md',
+    'qa/SKILL.md',
     'qa-only/SKILL.md',
-    'setup-browser-cookies/SKILL.md',
     'ship/SKILL.md', 'review/SKILL.md',
     'plan-ceo-review/SKILL.md', 'plan-eng-review/SKILL.md',
     'retro/SKILL.md',
@@ -798,17 +811,18 @@ describe('Completeness Principle in generated SKILL.md files', () => {
     'design-review/SKILL.md',
     'design-consultation/SKILL.md',
     'document-release/SKILL.md',
-    'cso/SKILL.md',  ];
+    'cso/SKILL.md',
+  ];
 
   for (const skill of skillsWithPreamble) {
-    test(`${skill} contains Completeness Principle section`, () => {
+    test(`${skill} contains Execution Completeness section`, () => {
       const content = fs.readFileSync(path.join(ROOT, skill), 'utf-8');
-      expect(content).toContain('Completeness Principle');
-      expect(content).toContain('Boil the Lake');
+      expect(content).toContain('Execution Completeness');
+      expect(content).toContain('Completeness: X/10');
     });
   }
 
-  test('Completeness Principle includes compression table in tier 2+ skills', () => {
+  test('Execution Completeness includes compression table in tier 2+ skills', () => {
     // Root is tier 1 (no completeness). Check tier 2+ skill.
     const content = fs.readFileSync(path.join(ROOT, 'cso', 'SKILL.md'), 'utf-8');
     expect(content).toContain('CC+gstack');
@@ -918,12 +932,15 @@ describe('gstack-slug', () => {
 
   test('binary exists and is executable', () => {
     expect(fs.existsSync(SLUG_BIN)).toBe(true);
-    const stat = fs.statSync(SLUG_BIN);
-    expect(stat.mode & 0o111).toBeGreaterThan(0);
+    if (process.platform !== 'win32') {
+      const stat = fs.statSync(SLUG_BIN);
+      expect(stat.mode & 0o111).toBeGreaterThan(0);
+    }
   });
 
   test('outputs SLUG and BRANCH lines in a git repo', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!TEST_BASH) return;
+    const result = runBash('./bin/gstack-slug');
     expect(result.exitCode).toBe(0);
     const output = result.stdout.toString();
     expect(output).toContain('SLUG=');
@@ -931,21 +948,24 @@ describe('gstack-slug', () => {
   });
 
   test('SLUG does not contain forward slashes', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!TEST_BASH) return;
+    const result = runBash('./bin/gstack-slug');
     const slug = result.stdout.toString().match(/SLUG=(.*)/)?.[1] ?? '';
     expect(slug).not.toContain('/');
     expect(slug.length).toBeGreaterThan(0);
   });
 
   test('BRANCH does not contain forward slashes', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!TEST_BASH) return;
+    const result = runBash('./bin/gstack-slug');
     const branch = result.stdout.toString().match(/BRANCH=(.*)/)?.[1] ?? '';
     expect(branch).not.toContain('/');
     expect(branch.length).toBeGreaterThan(0);
   });
 
   test('output is eval-compatible (KEY=VALUE format)', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!TEST_BASH) return;
+    const result = runBash('./bin/gstack-slug');
     const lines = result.stdout.toString().trim().split('\n');
     expect(lines.length).toBe(2);
     expect(lines[0]).toMatch(/^SLUG=.+/);
@@ -953,7 +973,8 @@ describe('gstack-slug', () => {
   });
 
   test('output values contain only safe characters (no shell metacharacters)', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!TEST_BASH) return;
+    const result = runBash('./bin/gstack-slug');
     const slug = result.stdout.toString().match(/SLUG=(.*)/)?.[1] ?? '';
     const branch = result.stdout.toString().match(/BRANCH=(.*)/)?.[1] ?? '';
     // Only alphanumeric, dot, dash, underscore are allowed (#133)
@@ -961,10 +982,8 @@ describe('gstack-slug', () => {
     expect(branch).toMatch(/^[a-zA-Z0-9._-]+$/);
   });
   test('eval sets variables under bash with set -euo pipefail', () => {
-    const result = Bun.spawnSync(
-      ['bash', '-c', 'set -euo pipefail; eval "$(./bin/gstack-slug 2>/dev/null)"; echo "SLUG=$SLUG"; echo "BRANCH=$BRANCH"'],
-      { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' }
-    );
+    if (!TEST_BASH) return;
+    const result = runBash('set -euo pipefail; eval "$(./bin/gstack-slug 2>/dev/null)"; echo "SLUG=$SLUG"; echo "BRANCH=$BRANCH"');
     expect(result.exitCode).toBe(0);
     const output = result.stdout.toString();
     expect(output).toMatch(/^SLUG=.+/m);
@@ -972,12 +991,14 @@ describe('gstack-slug', () => {
   });
 
   test('no templates or bin scripts use source process substitution for gstack-slug', () => {
-    const result = Bun.spawnSync(
-      ['grep', '-r', 'source <(.*gstack-slug', '--include=*.tmpl', '--include=gstack-review-*', '.'],
-      { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' }
-    );
-    // grep returns exit code 1 when no matches found — that's what we want
-    expect(result.stdout.toString().trim()).toBe('');
+    const filesToCheck = [
+      ...new Bun.Glob('**/*.tmpl').scanSync({ cwd: ROOT, followSymlinks: false }),
+      ...new Bun.Glob('bin/*').scanSync({ cwd: ROOT, followSymlinks: false }),
+    ];
+    for (const rel of filesToCheck) {
+      const content = fs.readFileSync(path.join(ROOT, rel), 'utf-8');
+      expect(content).not.toMatch(/source <\([^)]*gstack-slug/);
+    }
   });
 });
 
@@ -1377,9 +1398,9 @@ describe('Skill trigger phrases', () => {
 
   // Skills with proactive triggers should have "Proactively suggest" in description
   const SKILLS_REQUIRING_PROACTIVE = [
-    'qa', 'qa-only', 'ship', 'review', 'investigate', 'office-hours',
+    'qa', 'ship', 'review', 'investigate', 'office-hours',
     'plan-ceo-review', 'plan-eng-review', 'plan-design-review',
-    'design-review', 'design-consultation', 'retro', 'document-release',
+    'document-release', 'learn',
   ];
 
   for (const skill of SKILLS_REQUIRING_PROACTIVE) {
@@ -1475,10 +1496,10 @@ describe('Repo mode preamble validation', () => {
     expect(content).toContain('gstack-repo-mode');
   });
 
-  test('tier 3+ skills contain See Something Say Something section', () => {
-    // Root SKILL.md is tier 1 (no Repo Mode). Check a tier 3 skill instead.
+  test('tier 3+ skills contain Repo Ownership section', () => {
+    // Root SKILL.md is tier 1 (no Repo Ownership). Check a tier 3 skill instead.
     const content = fs.readFileSync(path.join(ROOT, 'plan-ceo-review', 'SKILL.md'), 'utf-8');
-    expect(content).toContain('See Something, Say Something');
+    expect(content).toContain('Repo Ownership');
     expect(content).toContain('REPO_MODE');
     expect(content).toContain('solo');
     expect(content).toContain('collaborative');

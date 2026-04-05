@@ -8,6 +8,10 @@ import * as os from 'os';
 const ROOT = path.resolve(import.meta.dir, '..');
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 
+function normalizeGeneratedPaths(content: string): string {
+  return content.replaceAll('\\', '/');
+}
+
 function extractDescription(content: string): string {
   const fmEnd = content.indexOf('\n---', 4);
   expect(fmEnd).toBeGreaterThan(0);
@@ -184,7 +188,7 @@ describe('gen-skill-docs', () => {
       stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
+    const output = normalizeGeneratedPaths(result.stdout.toString());
     // Every skill should be FRESH
     for (const skill of ALL_SKILLS) {
       const file = skill.dir === '.' ? 'SKILL.md' : `${skill.dir}/SKILL.md`;
@@ -244,15 +248,16 @@ describe('gen-skill-docs', () => {
   test('tier 2+ skills contain ELI16 simplification rules (AskUserQuestion format)', () => {
     // Root SKILL.md is tier 1 (no AskUserQuestion format). Check a tier 2+ skill instead.
     const content = fs.readFileSync(path.join(ROOT, 'cso', 'SKILL.md'), 'utf-8');
-    expect(content).toContain('No raw function names');
-    expect(content).toContain('plain English');
+    expect(content).toContain('Re-ground:');
+    expect(content).toContain('plain engineering language');
+    expect(content).toContain('Avoid internal names unless they materially help.');
   });
 
   test('tier 1 skills do NOT contain AskUserQuestion format', () => {
     // Use benchmark (tier 1) instead of root — root SKILL.md gets overwritten by Codex test setup
     const content = fs.readFileSync(path.join(ROOT, 'benchmark', 'SKILL.md'), 'utf-8');
     expect(content).not.toContain('## AskUserQuestion Format');
-    expect(content).not.toContain('## Completeness Principle');
+    expect(content).not.toContain('## Execution Completeness');
   });
 
   test('generated SKILL.md contains telemetry line', () => {
@@ -1233,7 +1238,7 @@ describe('INVOKE_SKILL resolver', () => {
 
   test('INVOKE_SKILL output includes default skip list', () => {
     expect(ceoContent).toContain('Preamble (run first)');
-    expect(ceoContent).toContain('Telemetry (run last)');
+    expect(ceoContent).toContain('Session Analytics (run last)');
     expect(ceoContent).toContain('AskUserQuestion Format');
   });
 
@@ -1305,43 +1310,27 @@ describe('parameterized resolver support', () => {
   });
 });
 
-// --- Preamble routing injection tests ---
+// --- Personalized routing tests ---
 
-describe('preamble routing injection', () => {
+describe('personalized routing defaults', () => {
+  const rootContent = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf-8');
   const shipContent = fs.readFileSync(path.join(ROOT, 'ship', 'SKILL.md'), 'utf-8');
 
-  test('preamble bash checks for routing section in CLAUDE.md', () => {
-    expect(shipContent).toContain('grep -q "## Skill routing" CLAUDE.md');
-    expect(shipContent).toContain('HAS_ROUTING');
+  test('root skill exposes only the core workflow routing block by default', () => {
+    expect(rootContent).toContain('Default core workflows');
+    expect(rootContent).toContain('invoke `/office-hours`');
+    expect(rootContent).toContain('invoke `/review`');
+    expect(rootContent).toContain('invoke `/ship`');
+    expect(rootContent).toContain('invoke `/learn`');
+    expect(rootContent).not.toContain('invoke `/autoplan`');
+    expect(rootContent).not.toContain('invoke `/design-consultation`');
+    expect(rootContent).not.toContain('invoke `/retro`');
   });
 
-  test('preamble bash reads routing_declined config', () => {
-    expect(shipContent).toContain('routing_declined');
-    expect(shipContent).toContain('ROUTING_DECLINED');
-  });
-
-  test('preamble includes routing injection AskUserQuestion', () => {
-    expect(shipContent).toContain('Add routing rules to CLAUDE.md');
-    expect(shipContent).toContain("I'll invoke skills manually");
-  });
-
-  test('routing injection respects prior decline', () => {
-    expect(shipContent).toContain('ROUTING_DECLINED');
-    expect(shipContent).toMatch(/routing_declined.*true/);
-  });
-
-  test('routing injection only fires when all conditions met', () => {
-    // Must be: HAS_ROUTING=no AND ROUTING_DECLINED=false AND PROACTIVE_PROMPTED=yes
-    expect(shipContent).toContain('HAS_ROUTING');
-    expect(shipContent).toContain('ROUTING_DECLINED');
-    expect(shipContent).toContain('PROACTIVE_PROMPTED');
-  });
-
-  test('routing section content includes key routing rules', () => {
-    expect(shipContent).toContain('invoke office-hours');
-    expect(shipContent).toContain('invoke investigate');
-    expect(shipContent).toContain('invoke ship');
-    expect(shipContent).toContain('invoke qa');
+  test('preamble does not include automatic CLAUDE.md routing injection', () => {
+    expect(shipContent).not.toContain('Add routing rules to CLAUDE.md');
+    expect(shipContent).not.toContain('ROUTING_DECLINED');
+    expect(shipContent).not.toContain('## Skill routing');
   });
 });
 
@@ -1584,7 +1573,7 @@ describe('Codex generation (--host codex)', () => {
       stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
+    const output = normalizeGeneratedPaths(result.stdout.toString());
     // Every Codex skill should be FRESH
     for (const skill of CODEX_SKILLS) {
       expect(output).toContain(`FRESH: .agents/skills/${skill.codexName}/SKILL.md`);
@@ -1618,7 +1607,7 @@ describe('Codex generation (--host codex)', () => {
     const descLines = frontmatter.split('\n').filter(l => l.startsWith('  '));
     expect(descLines.length).toBeGreaterThan(1);
     // Verify key phrases survived
-    expect(frontmatter).toContain('YC Office Hours');
+    expect(frontmatter).toContain('Office Hours');
   });
 
   test('hook skills have safety prose and no hooks: in frontmatter', () => {
@@ -1883,7 +1872,7 @@ describe('Factory generation (--host factory)', () => {
       cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
+    const output = normalizeGeneratedPaths(result.stdout.toString());
     for (const skill of FACTORY_SKILLS) {
       expect(output).toContain(`FRESH: .factory/skills/${skill.factoryName}/SKILL.md`);
     }
@@ -1960,7 +1949,7 @@ describe('Parameterized host smoke tests', () => {
           { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' }
         );
         expect(result.exitCode).toBe(0);
-        const output = result.stdout.toString();
+        const output = normalizeGeneratedPaths(result.stdout.toString());
         expect(output).not.toContain('STALE');
       });
 
@@ -1981,7 +1970,7 @@ describe('--host all', () => {
       cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
+    const output = normalizeGeneratedPaths(result.stdout.toString());
     // All hosts should appear in output
     expect(output).toContain('FRESH: SKILL.md');           // claude
     for (const hostConfig of getExternalHosts()) {
@@ -2289,22 +2278,20 @@ describe('telemetry', () => {
     expect(content).toContain('_TEL_START');
     expect(content).toContain('_SESSION_ID');
     expect(content).toContain('TELEMETRY:');
-    expect(content).toContain('TEL_PROMPTED:');
     expect(content).toContain('gstack-config get telemetry');
   });
 
-  test('generated SKILL.md contains telemetry opt-in prompt', () => {
+  test('generated SKILL.md does not contain first-run telemetry opt-in prompt', () => {
     const content = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf-8');
-    expect(content).toContain('.telemetry-prompted');
-    expect(content).toContain('Help gstack get better');
-    expect(content).toContain('gstack-config set telemetry community');
-    expect(content).toContain('gstack-config set telemetry anonymous');
-    expect(content).toContain('gstack-config set telemetry off');
+    expect(content).not.toContain('.telemetry-prompted');
+    expect(content).not.toContain('Help gstack get better');
+    expect(content).not.toContain('gstack-config set telemetry community');
+    expect(content).not.toContain('gstack-config set telemetry anonymous');
   });
 
   test('generated SKILL.md contains telemetry epilogue', () => {
     const content = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf-8');
-    expect(content).toContain('Telemetry (run last)');
+    expect(content).toContain('Session Analytics (run last)');
     expect(content).toContain('gstack-telemetry-log');
     expect(content).toContain('_TEL_END');
     expect(content).toContain('_TEL_DUR');
@@ -2326,7 +2313,7 @@ describe('telemetry', () => {
       if (fs.existsSync(skillPath)) {
         const content = fs.readFileSync(skillPath, 'utf-8');
         expect(content).toContain('_TEL_START');
-        expect(content).toContain('Telemetry (run last)');
+        expect(content).toContain('Session Analytics (run last)');
       }
     }
   });
@@ -2405,24 +2392,12 @@ describe('community fixes wave', () => {
     }
   });
 
-  // #467 — Telemetry: preamble JSONL writes are gated by telemetry setting
-  test('preamble JSONL writes are inside telemetry conditional', () => {
+  test('preamble keeps local analytics always-on and gates only remote telemetry', () => {
     const preamble = fs.readFileSync(path.join(ROOT, 'scripts/resolvers/preamble.ts'), 'utf-8');
-    // Find all skill-usage.jsonl write lines
-    const lines = preamble.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes('skill-usage.jsonl') && lines[i].includes('>>')) {
-        // Look backwards for a telemetry conditional within 5 lines
-        let foundConditional = false;
-        for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
-          if (lines[j].includes('_TEL') && lines[j].includes('off')) {
-            foundConditional = true;
-            break;
-          }
-        }
-        expect(foundConditional).toBe(true);
-      }
-    }
+    expect(preamble).toContain('~/.gstack/analytics/skill-usage.jsonl');
+    expect(preamble).toContain('echo \'{"skill":"SKILL_NAME"');
+    expect(preamble).toContain('if [ "$_TEL" != "off" ] && [ -x ~/.claude/skills/gstack/bin/gstack-telemetry-log ]; then');
+    expect(preamble).toContain('Optional remote telemetry (disabled by default, requires explicit config)');
   });
 });
 
@@ -2533,10 +2508,11 @@ describe('LEARNINGS_SEARCH resolver', () => {
     expect(content).toContain('--cross-project');
   });
 
-  test('learnings search includes AskUserQuestion for first-time cross-project opt-in', () => {
+  test('learnings search defaults to project-scoped mode without first-run opt-in prompt', () => {
     const content = fs.readFileSync(path.join(ROOT, 'review', 'SKILL.md'), 'utf-8');
-    expect(content).toContain('Enable cross-project learnings');
-    expect(content).toContain('project-scoped only');
+    expect(content).toContain('[ -n "$_CROSS_PROJ" ] || _CROSS_PROJ="false"');
+    expect(content).toContain('Project-scoped learnings are the default');
+    expect(content).not.toContain('Enable cross-project learnings');
   });
 
   test('learnings search mentions prior learning applied display format', () => {

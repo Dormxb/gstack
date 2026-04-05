@@ -21,6 +21,7 @@ import { externalSkillName, extractHookSafetyProse as _extractHookSafetyProse, e
 import { generatePlanCompletionAuditShip, generatePlanCompletionAuditReview, generatePlanVerificationExec } from './resolvers/review';
 import { ALL_HOST_CONFIGS, ALL_HOST_NAMES, resolveHostArg, getHostConfig } from '../hosts/index';
 import type { HostConfig } from './host-config';
+import { sanitizeSkillDescription } from './personalization-config';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -191,6 +192,18 @@ function processVoiceTriggers(content: string): string {
 
 // Export for testing
 export { extractVoiceTriggers, processVoiceTriggers };
+
+function processPersonalizedDescription(content: string, skillName: string): string {
+  const { description } = extractNameAndDescription(content);
+  if (!description) return content;
+
+  const nextDescription = sanitizeSkillDescription(description, skillName);
+  if (nextDescription === description) return content;
+
+  const oldIndented = description.split('\n').map(l => `  ${l}`).join('\n');
+  const newIndented = nextDescription.split('\n').map(l => `  ${l}`).join('\n');
+  return content.replace(oldIndented, newIndented);
+}
 
 const OPENAI_SHORT_DESCRIPTION_LIMIT = 120;
 
@@ -460,6 +473,7 @@ function processTemplate(tmplPath: string, host: Host = 'claude'): { outputPath:
   // Must run BEFORE transformFrontmatter so all hosts see the updated description,
   // and BEFORE extractedDescription is used by external host metadata.
   content = processVoiceTriggers(content);
+  content = processPersonalizedDescription(content, skillName);
 
   // Re-extract description AFTER voice trigger preprocessing so Codex openai.yaml
   // metadata gets the updated description with voice triggers included.

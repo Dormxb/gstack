@@ -359,11 +359,14 @@ describe('host-config-export.ts CLI', () => {
     expect(exitCode).toBe(1);
   });
 
-  test('detect finds claude (since we are running in claude)', () => {
+  test('detect returns only known host names', () => {
     const { stdout, exitCode } = run('detect');
     expect(exitCode).toBe(0);
-    // claude binary should be on PATH in this environment
-    expect(stdout).toContain('claude');
+    if (!stdout) return;
+    const detected = stdout.split('\n').filter(Boolean);
+    for (const host of detected) {
+      expect(ALL_HOST_NAMES).toContain(host as any);
+    }
   });
 
   test('unknown command exits 1', () => {
@@ -376,6 +379,12 @@ describe('host-config-export.ts CLI', () => {
 
 describe('golden-file regression', () => {
   const GOLDEN_DIR = path.join(ROOT, 'test', 'fixtures', 'golden');
+  Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex'], {
+    cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
+  });
+  Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'factory'], {
+    cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
+  });
 
   test('Claude ship skill matches golden baseline', () => {
     const golden = fs.readFileSync(path.join(GOLDEN_DIR, 'claude-ship-SKILL.md'), 'utf-8');

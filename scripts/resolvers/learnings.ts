@@ -8,10 +8,11 @@
  * Storage is append-only. Duplicates (same key+type) are resolved at read time
  * by gstack-learnings-search ("latest winner" per key+type).
  *
- * Cross-project discovery is opt-in. The resolver asks the user once via
- * AskUserQuestion and persists the preference via gstack-config.
+ * Cross-project discovery is optional and disabled by default. The preference is
+ * read from gstack-config, with project-scoped learnings as the default mode.
  */
 import type { TemplateContext } from './types';
+import { PERSONALIZATION } from '../personalization-config';
 
 export function generateLearningsSearch(ctx: TemplateContext): string {
   if (ctx.host === 'codex') {
@@ -33,7 +34,8 @@ matches a past learning, note it: "Prior learning applied: [key] (confidence N, 
 Search for relevant learnings from previous sessions:
 
 \`\`\`bash
-_CROSS_PROJ=$(${ctx.paths.binDir}/gstack-config get cross_project_learnings 2>/dev/null || echo "unset")
+_CROSS_PROJ=$(${ctx.paths.binDir}/gstack-config get cross_project_learnings 2>/dev/null)
+[ -n "$_CROSS_PROJ" ] || _CROSS_PROJ="${PERSONALIZATION.onboarding.defaultCrossProjectLearnings}"
 echo "CROSS_PROJECT: $_CROSS_PROJ"
 if [ "$_CROSS_PROJ" = "true" ]; then
   ${ctx.paths.binDir}/gstack-learnings-search --limit 10 --cross-project 2>/dev/null || true
@@ -42,21 +44,8 @@ else
 fi
 \`\`\`
 
-If \`CROSS_PROJECT\` is \`unset\` (first time): Use AskUserQuestion:
-
-> gstack can search learnings from your other projects on this machine to find
-> patterns that might apply here. This stays local (no data leaves your machine).
-> Recommended for solo developers. Skip if you work on multiple client codebases
-> where cross-contamination would be a concern.
-
-Options:
-- A) Enable cross-project learnings (recommended)
-- B) Keep learnings project-scoped only
-
-If A: run \`${ctx.paths.binDir}/gstack-config set cross_project_learnings true\`
-If B: run \`${ctx.paths.binDir}/gstack-config set cross_project_learnings false\`
-
-Then re-run the search with the appropriate flag.
+Project-scoped learnings are the default. Only use \`--cross-project\` when the user
+has explicitly enabled it with \`${ctx.paths.binDir}/gstack-config set cross_project_learnings true\`.
 
 If learnings are found, incorporate them into your analysis. When a review finding
 matches a past learning, display:

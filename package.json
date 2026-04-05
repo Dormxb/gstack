@@ -1,7 +1,7 @@
 {
   "name": "gstack",
-  "version": "0.15.8.0",
-  "description": "Garry's Stack — Claude Code skills + fast headless browser. One repo, one install, entire AI engineering workflow.",
+  "version": "0.15.9.0",
+  "description": "Independent fork of gstack for structured AI engineering workflows across Claude Code, Codex, and related hosts.",
   "license": "MIT",
   "type": "module",
   "bin": {
