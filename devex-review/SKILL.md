@@ -1,17 +1,24 @@
 ---
-name: connect-chrome
-version: 0.1.0
+name: devex-review
+preamble-tier: 3
+version: 1.0.0
 description: |
-  Launch real Chrome controlled by gstack with the Side Panel extension auto-loaded.
-  One command: connects Claude to a visible Chrome window where you can watch every
-  action in real time. The extension shows a live activity feed in the Side Panel.
-  Use when asked to "connect chrome", "open chrome", "real browser", "launch chrome",
-  "side panel", or "control my browser".
+  Live developer experience audit. Uses the browse tool to actually TEST the
+  developer experience: navigates docs, tries the getting started flow, times
+  TTHW, screenshots error messages, evaluates CLI help text. Produces a DX
+  scorecard with evidence. Compares against /plan-devex-review scores if they
+  exist (the boomerang: plan said 3 minutes, reality says 8). Use when asked to
+  "test the DX", "DX audit", "developer experience test", or "try the
+  onboarding". Proactively suggest after shipping a developer-facing feature. (gstack)
+  Voice triggers (speech-to-text aliases): "dx audit", "test the developer experience", "try the onboarding", "developer experience test".
 allowed-tools:
-  - Bash
   - Read
+  - Edit
+  - Grep
+  - Glob
+  - Bash
   - AskUserQuestion
-
+  - WebSearch
 ---
 <!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->
 <!-- Regenerate: bun run gen:skill-docs -->
@@ -46,7 +53,7 @@ echo "TELEMETRY: ${_TEL:-off}"
 echo "TEL_PROMPTED: $_TEL_PROMPTED"
 mkdir -p ~/.gstack/analytics
 if [ "$_TEL" != "off" ]; then
-echo '{"skill":"connect-chrome","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
+echo '{"skill":"devex-review","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
 fi
 # zsh-compatible: use find instead of glob to avoid NOMATCH error
 for _PF in $(find ~/.gstack/analytics -maxdepth 1 -name '.pending-*' 2>/dev/null); do
@@ -71,7 +78,7 @@ else
   echo "LEARNINGS: 0"
 fi
 # Session timeline: record skill start (local-only, never sent anywhere)
-~/.claude/skills/gstack/bin/gstack-timeline-log '{"skill":"connect-chrome","event":"started","branch":"'"$_BRANCH"'","session":"'"$_SESSION_ID"'"}' 2>/dev/null &
+~/.claude/skills/gstack/bin/gstack-timeline-log '{"skill":"devex-review","event":"started","branch":"'"$_BRANCH"'","session":"'"$_SESSION_ID"'"}' 2>/dev/null &
 # Check if CLAUDE.md has routing rules
 _HAS_ROUTING="no"
 if [ -f CLAUDE.md ] && grep -q "## Skill routing" CLAUDE.md 2>/dev/null; then
@@ -437,6 +444,31 @@ artifacts that inform the plan, not code changes:
 These are read-only in spirit — they inspect the live site, generate visual artifacts,
 or get independent opinions. They do NOT modify project source files.
 
+## Skill Invocation During Plan Mode
+
+If a user invokes a skill during plan mode, that invoked skill workflow takes
+precedence over generic plan mode behavior until it finishes or the user explicitly
+cancels that skill.
+
+Treat the loaded skill as executable instructions, not reference material. Follow
+it step by step. Do not summarize, skip, reorder, or shortcut its steps.
+
+If the skill says to use AskUserQuestion, do that. Those AskUserQuestion calls
+satisfy plan mode's requirement to end turns with AskUserQuestion.
+
+If the skill reaches a STOP point, stop immediately at that point, ask the required
+question if any, and wait for the user's response. Do not continue the workflow
+past a STOP point, and do not call ExitPlanMode at that point.
+
+If the skill includes commands marked "PLAN MODE EXCEPTION — ALWAYS RUN," execute
+them. The skill may edit the plan file, and other writes are allowed only if they
+are already permitted by Plan Mode Safe Operations or explicitly marked as a plan
+mode exception.
+
+Only call ExitPlanMode after the active skill workflow is complete and there are no
+other invoked skill workflows left to run, or if the user explicitly tells you to
+cancel the skill or leave plan mode.
+
 ## Plan Status Footer
 
 When you are in plan mode and about to call ExitPlanMode:
@@ -465,6 +497,7 @@ Then write a `## GSTACK REVIEW REPORT` section to the end of the plan file:
 | Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
 | Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
 | Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
+| DX Review | \`/plan-devex-review\` | Developer experience gaps | 0 | — | — |
 
 **VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
@@ -473,10 +506,44 @@ Then write a `## GSTACK REVIEW REPORT` section to the end of the plan file:
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
 
-# /connect-chrome — Launch Real Chrome with Side Panel
+## Step 0: Detect platform and base branch
 
-Connect Claude to a visible Chrome window with the gstack extension auto-loaded.
-You see every click, every navigation, every action in real time.
+First, detect the git hosting platform from the remote URL:
+
+```bash
+git remote get-url origin 2>/dev/null
+```
+
+- If the URL contains "github.com" → platform is **GitHub**
+- If the URL contains "gitlab" → platform is **GitLab**
+- Otherwise, check CLI availability:
+  - `gh auth status 2>/dev/null` succeeds → platform is **GitHub** (covers GitHub Enterprise)
+  - `glab auth status 2>/dev/null` succeeds → platform is **GitLab** (covers self-hosted)
+  - Neither → **unknown** (use git-native commands only)
+
+Determine which branch this PR/MR targets, or the repo's default branch if no
+PR/MR exists. Use the result as "the base branch" in all subsequent steps.
+
+**If GitHub:**
+1. `gh pr view --json baseRefName -q .baseRefName` — if succeeds, use it
+2. `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` — if succeeds, use it
+
+**If GitLab:**
+1. `glab mr view -F json 2>/dev/null` and extract the `target_branch` field — if succeeds, use it
+2. `glab repo view -F json 2>/dev/null` and extract the `default_branch` field — if succeeds, use it
+
+**Git-native fallback (if unknown platform, or CLI commands fail):**
+1. `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'`
+2. If that fails: `git rev-parse --verify origin/main 2>/dev/null` → use `main`
+3. If that fails: `git rev-parse --verify origin/master 2>/dev/null` → use `master`
+
+If all fail, fall back to `main`.
+
+Print the detected base branch name. In every subsequent `git diff`, `git log`,
+`git fetch`, `git merge`, and PR/MR creation command, substitute the detected
+branch name wherever the instructions say "the base branch" or `<default>`.
+
+---
 
 ## SETUP (run this check BEFORE any browse command)
 
@@ -514,180 +581,405 @@ If `NEEDS_SETUP`:
    fi
    ```
 
-## Step 0: Pre-flight cleanup
+# /devex-review: Live Developer Experience Audit
 
-Before connecting, kill any stale browse servers and clean up lock files that
-may have persisted from a crash. This prevents "already connected" false
-positives and Chromium profile lock conflicts.
+You are a DX engineer dogfooding a live developer product. Not reviewing a plan.
+Not reading about the experience. TESTING it.
 
-```bash
-# Kill any existing browse server
-if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.gstack/browse.json" ]; then
-  _OLD_PID=$(cat "$(git rev-parse --show-toplevel)/.gstack/browse.json" 2>/dev/null | grep -o '"pid":[0-9]*' | grep -o '[0-9]*')
-  [ -n "$_OLD_PID" ] && kill "$_OLD_PID" 2>/dev/null || true
-  sleep 1
-  [ -n "$_OLD_PID" ] && kill -9 "$_OLD_PID" 2>/dev/null || true
-  rm -f "$(git rev-parse --show-toplevel)/.gstack/browse.json"
-fi
-# Clean Chromium profile locks (can persist after crashes)
-_PROFILE_DIR="$HOME/.gstack/chromium-profile"
-for _LF in SingletonLock SingletonSocket SingletonCookie; do
-  rm -f "$_PROFILE_DIR/$_LF" 2>/dev/null || true
-done
-echo "Pre-flight cleanup done"
-```
+Use the browse tool to navigate docs, try the getting started flow, and screenshot
+what developers actually see. Use bash to try CLI commands. Measure, don't guess.
 
-## Step 1: Connect
+## DX First Principles
 
-```bash
-$B connect
-```
+These are the laws. Every recommendation traces back to one of these.
 
-This launches Playwright's bundled Chromium in headed mode with:
-- A visible window you can watch (not your regular Chrome — it stays untouched)
-- The gstack Chrome extension auto-loaded via `launchPersistentContext`
-- A golden shimmer line at the top of every page so you know which window is controlled
-- A sidebar agent process for chat commands
+1. **Zero friction at T0.** First five minutes decide everything. One click to start. Hello world without reading docs. No credit card. No demo call.
+2. **Incremental steps.** Never force developers to understand the whole system before getting value from one part. Gentle ramp, not cliff.
+3. **Learn by doing.** Playgrounds, sandboxes, copy-paste code that works in context. Reference docs are necessary but never sufficient.
+4. **Decide for me, let me override.** Opinionated defaults are features. Escape hatches are requirements. Strong opinions, loosely held.
+5. **Fight uncertainty.** Developers need: what to do next, whether it worked, how to fix it when it didn't. Every error = problem + cause + fix.
+6. **Show code in context.** Hello world is a lie. Show real auth, real error handling, real deployment. Solve 100% of the problem.
+7. **Speed is a feature.** Iteration speed is everything. Response times, build times, lines of code to accomplish a task, concepts to learn.
+8. **Create magical moments.** What would feel like magic? Stripe's instant API response. Vercel's push-to-deploy. Find yours and make it the first thing developers experience.
 
-The `connect` command auto-discovers the extension from the gstack install
-directory. It always uses port **34567** so the extension can auto-connect.
+## The Seven DX Characteristics
 
-After connecting, print the full output to the user. Confirm you see
-`Mode: headed` in the output.
+| # | Characteristic | What It Means | Gold Standard |
+|---|---------------|---------------|---------------|
+| 1 | **Usable** | Simple to install, set up, use. Intuitive APIs. Fast feedback. | Stripe: one key, one curl, money moves |
+| 2 | **Credible** | Reliable, predictable, consistent. Clear deprecation. Secure. | TypeScript: gradual adoption, never breaks JS |
+| 3 | **Findable** | Easy to discover AND find help within. Strong community. Good search. | React: every question answered on SO |
+| 4 | **Useful** | Solves real problems. Features match actual use cases. Scales. | Tailwind: covers 95% of CSS needs |
+| 5 | **Valuable** | Reduces friction measurably. Saves time. Worth the dependency. | Next.js: SSR, routing, bundling, deploy in one |
+| 6 | **Accessible** | Works across roles, environments, preferences. CLI + GUI. | VS Code: works for junior to principal |
+| 7 | **Desirable** | Best-in-class tech. Reasonable pricing. Community momentum. | Vercel: devs WANT to use it, not tolerate it |
 
-If the output shows an error or the mode is not `headed`, run `$B status` and
-share the output with the user before proceeding.
+## Cognitive Patterns — How Great DX Leaders Think
 
-## Step 2: Verify
+Internalize these; don't enumerate them.
 
-```bash
-$B status
-```
+1. **Chef-for-chefs** — Your users build products for a living. The bar is higher because they notice everything.
+2. **First five minutes obsession** — New dev arrives. Clock starts. Can they hello-world without docs, sales, or credit card?
+3. **Error message empathy** — Every error is pain. Does it identify the problem, explain the cause, show the fix, link to docs?
+4. **Escape hatch awareness** — Every default needs an override. No escape hatch = no trust = no adoption at scale.
+5. **Journey wholeness** — DX is discover → evaluate → install → hello world → integrate → debug → upgrade → scale → migrate. Every gap = a lost dev.
+6. **Context switching cost** — Every time a dev leaves your tool (docs, dashboard, error lookup), you lose them for 10-20 minutes.
+7. **Upgrade fear** — Will this break my production app? Clear changelogs, migration guides, codemods, deprecation warnings. Upgrades should be boring.
+8. **SDK completeness** — If devs write their own HTTP wrapper, you failed. If the SDK works in 4 of 5 languages, the fifth community hates you.
+9. **Pit of Success** — "We want customers to simply fall into winning practices" (Rico Mariani). Make the right thing easy, the wrong thing hard.
+10. **Progressive disclosure** — Simple case is production-ready, not a toy. Complex case uses the same API. SwiftUI: \`Button("Save") { save() }\` → full customization, same API.
 
-Confirm the output shows `Mode: headed`. Read the port from the state file:
+## DX Scoring Rubric (0-10 calibration)
 
-```bash
-cat "$(git rev-parse --show-toplevel 2>/dev/null)/.gstack/browse.json" 2>/dev/null | grep -o '"port":[0-9]*' | grep -o '[0-9]*'
-```
+| Score | Meaning |
+|-------|---------|
+| 9-10 | Best-in-class. Stripe/Vercel tier. Developers rave about it. |
+| 7-8 | Good. Developers can use it without frustration. Minor gaps. |
+| 5-6 | Acceptable. Works but with friction. Developers tolerate it. |
+| 3-4 | Poor. Developers complain. Adoption suffers. |
+| 1-2 | Broken. Developers abandon after first attempt. |
+| 0 | Not addressed. No thought given to this dimension. |
 
-The port should be **34567**. If it's different, note it — the user may need it
-for the Side Panel.
+**The gap method:** For each score, explain what a 10 looks like for THIS product. Then fix toward 10.
 
-Also find the extension path so you can help the user if they need to load it manually:
+## TTHW Benchmarks (Time to Hello World)
 
-```bash
-_EXT_PATH=""
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/gstack/extension/manifest.json" ] && _EXT_PATH="$_ROOT/.claude/skills/gstack/extension"
-[ -z "$_EXT_PATH" ] && [ -f "$HOME/.claude/skills/gstack/extension/manifest.json" ] && _EXT_PATH="$HOME/.claude/skills/gstack/extension"
-echo "EXTENSION_PATH: ${_EXT_PATH:-NOT FOUND}"
-```
+| Tier | Time | Adoption Impact |
+|------|------|-----------------|
+| Champion | < 2 min | 3-4x higher adoption |
+| Competitive | 2-5 min | Baseline |
+| Needs Work | 5-10 min | Significant drop-off |
+| Red Flag | > 10 min | 50-70% abandon |
 
-## Step 3: Guide the user to the Side Panel
+## Hall of Fame Reference
 
-Use AskUserQuestion:
+During each review pass, load the relevant section from:
+\`~/.claude/skills/gstack/plan-devex-review/dx-hall-of-fame.md\`
 
-> Chrome is launched with gstack control. You should see Playwright's Chromium
-> (not your regular Chrome) with a golden shimmer line at the top of the page.
->
-> The Side Panel extension should be auto-loaded. To open it:
-> 1. Look for the **puzzle piece icon** (Extensions) in the toolbar — it may
->    already show the gstack icon if the extension loaded successfully
-> 2. Click the **puzzle piece** → find **gstack browse** → click the **pin icon**
-> 3. Click the pinned **gstack icon** in the toolbar
-> 4. The Side Panel should open on the right showing a live activity feed
->
-> **Port:** 34567 (auto-detected — the extension connects automatically in the
-> Playwright-controlled Chrome).
+Read ONLY the section for the current pass (e.g., "## Pass 1" for Getting Started).
+Do NOT read the entire file at once. This keeps context focused.
 
-Options:
-- A) I can see the Side Panel — let's go!
-- B) I can see Chrome but can't find the extension
-- C) Something went wrong
+## Scope Declaration
 
-If B: Tell the user:
+Browse can test web-accessible surfaces: docs pages, API playgrounds, web dashboards,
+signup flows, interactive tutorials, error pages.
 
-> The extension is loaded into Playwright's Chromium at launch time, but
-> sometimes it doesn't appear immediately. Try these steps:
->
-> 1. Type `chrome://extensions` in the address bar
-> 2. Look for **"gstack browse"** — it should be listed and enabled
-> 3. If it's there but not pinned, go back to any page, click the puzzle piece
->    icon, and pin it
-> 4. If it's NOT listed at all, click **"Load unpacked"** and navigate to:
->    - Press **Cmd+Shift+G** in the file picker dialog
->    - Paste this path: `{EXTENSION_PATH}` (use the path from Step 2)
->    - Click **Select**
->
-> After loading, pin it and click the icon to open the Side Panel.
->
-> If the Side Panel badge stays gray (disconnected), click the gstack icon
-> and enter port **34567** manually.
+Browse CANNOT test: CLI install friction, terminal output quality, local environment
+setup, email verification flows, auth requiring real credentials, offline behavior,
+build times, IDE integration.
 
-If C:
+For untestable dimensions, use bash (for CLI --help, README, CHANGELOG) or mark as
+INFERRED from artifacts. Never guess. State your evidence source for every score.
 
-1. Run `$B status` and show the output
-2. If the server is not healthy, re-run Step 0 cleanup + Step 1 connect
-3. If the server IS healthy but the browser isn't visible, try `$B focus`
-4. If that fails, ask the user what they see (error message, blank screen, etc.)
+## Step 0: Target Discovery
 
-## Step 4: Demo
+1. Read CLAUDE.md for project URL, docs URL, CLI install command
+2. Read README.md for getting started instructions
+3. Read package.json or equivalent for install commands
 
-After the user confirms the Side Panel is working, run a quick demo:
+If URLs are missing, AskUserQuestion: "What's the URL for the docs/product I should test?"
+
+### Boomerang Baseline
+
+Check for prior /plan-devex-review scores:
 
 ```bash
-$B goto https://news.ycombinator.com
+eval "$(~/.claude/skills/gstack/bin/gstack-slug 2>/dev/null)"
+~/.claude/skills/gstack/bin/gstack-review-read 2>/dev/null | grep plan-devex-review || echo "NO_PRIOR_PLAN_REVIEW"
 ```
 
-Wait 2 seconds, then:
+If prior scores exist, display them. These are your baseline for the boomerang comparison.
+
+## Step 1: Getting Started Audit
+
+Navigate to the docs/landing page via browse. Screenshot it.
+
+```
+GETTING STARTED AUDIT
+=====================
+Step 1: [what dev does]          Time: [est]  Friction: [low/med/high]  Evidence: [screenshot/bash output]
+Step 2: [what dev does]          Time: [est]  Friction: [low/med/high]  Evidence: [screenshot/bash output]
+...
+TOTAL: [N steps, M minutes]
+```
+
+Score 0-10. Load "## Pass 1" from dx-hall-of-fame.md for calibration.
+
+## Step 2: API/CLI/SDK Ergonomics Audit
+
+Test what you can:
+- CLI: Run `--help` via bash. Evaluate output quality, flag design, discoverability.
+- API playground: Navigate via browse if one exists. Screenshot.
+- Naming: Check consistency across the API surface.
+
+Score 0-10. Load "## Pass 2" from dx-hall-of-fame.md for calibration.
+
+## Step 3: Error Message Audit
+
+Trigger common error scenarios:
+- Browse: Navigate to 404 pages, submit invalid forms, try unauthenticated access
+- CLI: Run with missing args, invalid flags, bad input
+
+Screenshot each error. Score against the Elm/Rust/Stripe three-tier model.
+
+Score 0-10. Load "## Pass 3" from dx-hall-of-fame.md for calibration.
+
+## Step 4: Documentation Audit
+
+Navigate the docs structure via browse:
+- Check search functionality (try 3 common queries)
+- Verify code examples are copy-paste-complete
+- Check language switcher behavior
+- Check information architecture (can you find what you need in <2 min?)
+
+Screenshot key findings. Score 0-10. Load "## Pass 4" from dx-hall-of-fame.md.
+
+## Step 5: Upgrade Path Audit
+
+Read via bash:
+- CHANGELOG quality (clear? user-facing? migration notes?)
+- Migration guides (exist? step-by-step?)
+- Deprecation warnings in code (grep for deprecated/obsolete)
+
+Score 0-10. Evidence: INFERRED from files. Load "## Pass 5" from dx-hall-of-fame.md.
+
+## Step 6: Developer Environment Audit
+
+Read via bash:
+- README setup instructions (steps? prerequisites? platform coverage?)
+- CI/CD configuration (exists? documented?)
+- TypeScript types (if applicable)
+- Test utilities / fixtures
+
+Score 0-10. Evidence: INFERRED from files. Load "## Pass 6" from dx-hall-of-fame.md.
+
+## Step 7: Community & Ecosystem Audit
+
+Browse:
+- Community links (GitHub Discussions, Discord, Stack Overflow)
+- GitHub issues (response time, templates, labels)
+- Contributing guide
+
+Score 0-10. Evidence: TESTED where web-accessible, INFERRED otherwise.
+
+## Step 8: DX Measurement Audit
+
+Check for feedback mechanisms:
+- Bug report templates
+- NPS or feedback widgets
+- Analytics on docs
+
+Score 0-10. Evidence: INFERRED from files/pages.
+
+## DX Scorecard with Evidence
+
+```
++====================================================================+
+|              DX LIVE AUDIT — SCORECARD                              |
++====================================================================+
+| Dimension            | Score  | Evidence | Method   |
+|----------------------|--------|----------|----------|
+| Getting Started      | __/10  | [screenshots] | TESTED   |
+| API/CLI/SDK          | __/10  | [screenshots] | PARTIAL  |
+| Error Messages       | __/10  | [screenshots] | PARTIAL  |
+| Documentation        | __/10  | [screenshots] | TESTED   |
+| Upgrade Path         | __/10  | [file refs]   | INFERRED |
+| Dev Environment      | __/10  | [file refs]   | INFERRED |
+| Community            | __/10  | [screenshots] | TESTED   |
+| DX Measurement       | __/10  | [file refs]   | INFERRED |
++--------------------------------------------------------------------+
+| TTHW (measured)      | __ min | [step count]  | TESTED   |
+| Overall DX           | __/10  |               |          |
++====================================================================+
+```
+
+## Boomerang Comparison
+
+If /plan-devex-review scores exist from the baseline check:
+
+```
+PLAN vs REALITY
+================
+| Dimension        | Plan Score | Live Score | Delta | Alert |
+|------------------|-----------|-----------|-------|-------|
+| Getting Started  | __/10     | __/10     | __    | ⚠/✓   |
+| API/CLI/SDK      | __/10     | __/10     | __    | ⚠/✓   |
+| Error Messages   | __/10     | __/10     | __    | ⚠/✓   |
+| Documentation    | __/10     | __/10     | __    | ⚠/✓   |
+| Upgrade Path     | __/10     | __/10     | __    | ⚠/✓   |
+| Dev Environment  | __/10     | __/10     | __    | ⚠/✓   |
+| Community        | __/10     | __/10     | __    | ⚠/✓   |
+| DX Measurement   | __/10     | __/10     | __    | ⚠/✓   |
+| TTHW             | __ min    | __ min    | __ min| ⚠/✓   |
+```
+
+Flag any dimension where live score < plan score - 2 (reality fell short of plan).
+
+## Review Log
+
+**PLAN MODE EXCEPTION — ALWAYS RUN:**
 
 ```bash
-$B snapshot -i
+~/.claude/skills/gstack/bin/gstack-review-log '{"skill":"devex-review","timestamp":"TIMESTAMP","status":"STATUS","overall_score":N,"product_type":"TYPE","tthw_measured":"TTHW","dimensions_tested":N,"dimensions_inferred":N,"boomerang":"YES_OR_NO","commit":"COMMIT"}'
 ```
 
-Tell the user: "Check the Side Panel — you should see the `goto` and `snapshot`
-commands appear in the activity feed. Every command Claude runs shows up here
-in real time."
+## Review Readiness Dashboard
 
-## Step 5: Sidebar chat
+After completing the review, read the review log and config to display the dashboard.
 
-After the activity feed demo, tell the user about the sidebar chat:
+```bash
+~/.claude/skills/gstack/bin/gstack-review-read
+```
 
-> The Side Panel also has a **chat tab**. Try typing a message like "take a
-> snapshot and describe this page." A sidebar agent (a child Claude instance)
-> executes your request in the browser — you'll see the commands appear in
-> the activity feed as they happen.
->
-> The sidebar agent can navigate pages, click buttons, fill forms, and read
-> content. Each task gets up to 5 minutes. It runs in an isolated session, so
-> it won't interfere with this Claude Code window.
+Parse the output. Find the most recent entry for each skill (plan-ceo-review, plan-eng-review, review, plan-design-review, design-review-lite, adversarial-review, codex-review, codex-plan-review). Ignore entries with timestamps older than 7 days. For the Eng Review row, show whichever is more recent between `review` (diff-scoped pre-landing review) and `plan-eng-review` (plan-stage architecture review). Append "(DIFF)" or "(PLAN)" to the status to distinguish. For the Adversarial row, show whichever is more recent between `adversarial-review` (new auto-scaled) and `codex-review` (legacy). For Design Review, show whichever is more recent between `plan-design-review` (full visual audit) and `design-review-lite` (code-level check). Append "(FULL)" or "(LITE)" to the status to distinguish. For the Outside Voice row, show the most recent `codex-plan-review` entry — this captures outside voices from both /plan-ceo-review and /plan-eng-review.
 
-## Step 6: What's next
+**Source attribution:** If the most recent entry for a skill has a \`"via"\` field, append it to the status label in parentheses. Examples: `plan-eng-review` with `via:"autoplan"` shows as "CLEAR (PLAN via /autoplan)". `review` with `via:"ship"` shows as "CLEAR (DIFF via /ship)". Entries without a `via` field show as "CLEAR (PLAN)" or "CLEAR (DIFF)" as before.
 
-Tell the user:
+Note: `autoplan-voices` and `design-outside-voices` entries are audit-trail-only (forensic data for cross-model consensus analysis). They do not appear in the dashboard and are not checked by any consumer.
 
-> You're all set! Here's what you can do with the connected Chrome:
->
-> **Watch Claude work in real time:**
-> - Run any gstack skill (`/qa`, `/design-review`, `/benchmark`) and watch
->   every action happen in the visible Chrome window + Side Panel feed
-> - No cookie import needed — the Playwright browser shares its own session
->
-> **Control the browser directly:**
-> - **Sidebar chat** — type natural language in the Side Panel and the sidebar
->   agent executes it (e.g., "fill in the login form and submit")
-> - **Browse commands** — `$B goto <url>`, `$B click <sel>`, `$B fill <sel> <val>`,
->   `$B snapshot -i` — all visible in Chrome + Side Panel
->
-> **Window management:**
-> - `$B focus` — bring Chrome to the foreground anytime
-> - `$B disconnect` — close headed Chrome and return to headless mode
->
-> **What skills look like in headed mode:**
-> - `/qa` runs its full test suite in the visible browser — you see every page
->   load, every click, every assertion
-> - `/design-review` takes screenshots in the real browser — same pixels you see
-> - `/benchmark` measures performance in the headed browser
+Display:
 
-Then proceed with whatever the user asked to do. If they didn't specify a task,
-ask what they'd like to test or browse.
+```
++====================================================================+
+|                    REVIEW READINESS DASHBOARD                       |
++====================================================================+
+| Review          | Runs | Last Run            | Status    | Required |
+|-----------------|------|---------------------|-----------|----------|
+| Eng Review      |  1   | 2026-03-16 15:00    | CLEAR     | YES      |
+| CEO Review      |  0   | —                   | —         | no       |
+| Design Review   |  0   | —                   | —         | no       |
+| Adversarial     |  0   | —                   | —         | no       |
+| Outside Voice   |  0   | —                   | —         | no       |
++--------------------------------------------------------------------+
+| VERDICT: CLEARED — Eng Review passed                                |
++====================================================================+
+```
+
+**Review tiers:**
+- **Eng Review (required by default):** The only review that gates shipping. Covers architecture, code quality, tests, performance. Can be disabled globally with \`gstack-config set skip_eng_review true\` (the "don't bother me" setting).
+- **CEO Review (optional):** Use your judgment. Recommend it for big product/business changes, new user-facing features, or scope decisions. Skip for bug fixes, refactors, infra, and cleanup.
+- **Design Review (optional):** Use your judgment. Recommend it for UI/UX changes. Skip for backend-only, infra, or prompt-only changes.
+- **Adversarial Review (automatic):** Always-on for every review. Every diff gets both Claude adversarial subagent and Codex adversarial challenge. Large diffs (200+ lines) additionally get Codex structured review with P1 gate. No configuration needed.
+- **Outside Voice (optional):** Independent plan review from a different AI model. Offered after all review sections complete in /plan-ceo-review and /plan-eng-review. Falls back to Claude subagent if Codex is unavailable. Never gates shipping.
+
+**Verdict logic:**
+- **CLEARED**: Eng Review has >= 1 entry within 7 days from either \`review\` or \`plan-eng-review\` with status "clean" (or \`skip_eng_review\` is \`true\`)
+- **NOT CLEARED**: Eng Review missing, stale (>7 days), or has open issues
+- CEO, Design, and Codex reviews are shown for context but never block shipping
+- If \`skip_eng_review\` config is \`true\`, Eng Review shows "SKIPPED (global)" and verdict is CLEARED
+
+**Staleness detection:** After displaying the dashboard, check if any existing reviews may be stale:
+- Parse the \`---HEAD---\` section from the bash output to get the current HEAD commit hash
+- For each review entry that has a \`commit\` field: compare it against the current HEAD. If different, count elapsed commits: \`git rev-list --count STORED_COMMIT..HEAD\`. Display: "Note: {skill} review from {date} may be stale — {N} commits since review"
+- For entries without a \`commit\` field (legacy entries): display "Note: {skill} review from {date} has no commit tracking — consider re-running for accurate staleness detection"
+- If all reviews match the current HEAD, do not display any staleness notes
+
+## Plan File Review Report
+
+After displaying the Review Readiness Dashboard in conversation output, also update the
+**plan file** itself so review status is visible to anyone reading the plan.
+
+### Detect the plan file
+
+1. Check if there is an active plan file in this conversation (the host provides plan file
+   paths in system messages — look for plan file references in the conversation context).
+2. If not found, skip this section silently — not every review runs in plan mode.
+
+### Generate the report
+
+Read the review log output you already have from the Review Readiness Dashboard step above.
+Parse each JSONL entry. Each skill logs different fields:
+
+- **plan-ceo-review**: \`status\`, \`unresolved\`, \`critical_gaps\`, \`mode\`, \`scope_proposed\`, \`scope_accepted\`, \`scope_deferred\`, \`commit\`
+  → Findings: "{scope_proposed} proposals, {scope_accepted} accepted, {scope_deferred} deferred"
+  → If scope fields are 0 or missing (HOLD/REDUCTION mode): "mode: {mode}, {critical_gaps} critical gaps"
+- **plan-eng-review**: \`status\`, \`unresolved\`, \`critical_gaps\`, \`issues_found\`, \`mode\`, \`commit\`
+  → Findings: "{issues_found} issues, {critical_gaps} critical gaps"
+- **plan-design-review**: \`status\`, \`initial_score\`, \`overall_score\`, \`unresolved\`, \`decisions_made\`, \`commit\`
+  → Findings: "score: {initial_score}/10 → {overall_score}/10, {decisions_made} decisions"
+- **plan-devex-review**: \`status\`, \`initial_score\`, \`overall_score\`, \`product_type\`, \`tthw_current\`, \`tthw_target\`, \`mode\`, \`persona\`, \`competitive_tier\`, \`unresolved\`, \`commit\`
+  → Findings: "score: {initial_score}/10 → {overall_score}/10, TTHW: {tthw_current} → {tthw_target}"
+- **devex-review**: \`status\`, \`overall_score\`, \`product_type\`, \`tthw_measured\`, \`dimensions_tested\`, \`dimensions_inferred\`, \`boomerang\`, \`commit\`
+  → Findings: "score: {overall_score}/10, TTHW: {tthw_measured}, {dimensions_tested} tested/{dimensions_inferred} inferred"
+- **codex-review**: \`status\`, \`gate\`, \`findings\`, \`findings_fixed\`
+  → Findings: "{findings} findings, {findings_fixed}/{findings} fixed"
+
+All fields needed for the Findings column are now present in the JSONL entries.
+For the review you just completed, you may use richer details from your own Completion
+Summary. For prior reviews, use the JSONL fields directly — they contain all required data.
+
+Produce this markdown table:
+
+\`\`\`markdown
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | {runs} | {status} | {findings} |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | {runs} | {status} | {findings} |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | {runs} | {status} | {findings} |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | {runs} | {status} | {findings} |
+| DX Review | \`/plan-devex-review\` | Developer experience gaps | {runs} | {status} | {findings} |
+\`\`\`
+
+Below the table, add these lines (omit any that are empty/not applicable):
+
+- **CODEX:** (only if codex-review ran) — one-line summary of codex fixes
+- **CROSS-MODEL:** (only if both Claude and Codex reviews exist) — overlap analysis
+- **UNRESOLVED:** total unresolved decisions across all reviews
+- **VERDICT:** list reviews that are CLEAR (e.g., "CEO + ENG CLEARED — ready to implement").
+  If Eng Review is not CLEAR and not skipped globally, append "eng review required".
+
+### Write to the plan file
+
+**PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
+file you are allowed to edit in plan mode. The plan file review report is part of the
+plan's living status.
+
+- Search the plan file for a \`## GSTACK REVIEW REPORT\` section **anywhere** in the file
+  (not just at the end — content may have been added after it).
+- If found, **replace it** entirely using the Edit tool. Match from \`## GSTACK REVIEW REPORT\`
+  through either the next \`## \` heading or end of file, whichever comes first. This ensures
+  content added after the report section is preserved, not eaten. If the Edit fails
+  (e.g., concurrent edit changed the content), re-read the plan file and retry once.
+- If no such section exists, **append it** to the end of the plan file.
+- Always place it as the very last section in the plan file. If it was found mid-file,
+  move it: delete the old location and append at the end.
+
+## Capture Learnings
+
+If you discovered a non-obvious pattern, pitfall, or architectural insight during
+this session, log it for future sessions:
+
+```bash
+~/.claude/skills/gstack/bin/gstack-learnings-log '{"skill":"devex-review","type":"TYPE","key":"SHORT_KEY","insight":"DESCRIPTION","confidence":N,"source":"SOURCE","files":["path/to/relevant/file"]}'
+```
+
+**Types:** `pattern` (reusable approach), `pitfall` (what NOT to do), `preference`
+(user stated), `architecture` (structural decision), `tool` (library/framework insight),
+`operational` (project environment/CLI/workflow knowledge).
+
+**Sources:** `observed` (you found this in the code), `user-stated` (user told you),
+`inferred` (AI deduction), `cross-model` (both Claude and Codex agree).
+
+**Confidence:** 1-10. Be honest. An observed pattern you verified in the code is 8-9.
+An inference you're not sure about is 4-5. A user preference they explicitly stated is 10.
+
+**files:** Include the specific file paths this learning references. This enables
+staleness detection: if those files are later deleted, the learning can be flagged.
+
+**Only log genuine discoveries.** Don't log obvious things. Don't log things the user
+already knows. A good test: would this insight save time in a future session? If yes, log it.
+
+## Next Steps
+
+After the audit, recommend:
+- Fix the gaps found (specific, actionable fixes)
+- Re-run /devex-review after fixes to verify improvement
+- If boomerang showed significant gaps, re-run /plan-devex-review on the next feature plan
+
+## Formatting Rules
+
+* NUMBER issues (1, 2, 3...) and LETTERS for options (A, B, C...).
+* Rate every dimension with evidence source.
+* Screenshots are the gold standard. File references are acceptable. Guesses are not.
