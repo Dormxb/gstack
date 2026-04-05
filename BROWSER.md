@@ -1,3 +1,5 @@
+[English](BROWSER.md) | [简体中文](BROWSER.zh-CN.md)
+
 # Browser — technical details
 
 This document covers the command reference and internals of gstack's headless browser.

@@ -1,3 +1,5 @@
+[English](ETHOS.md) | [简体中文](ETHOS.zh-CN.md)
+
 # gstack Builder Ethos
 
 These are the principles that shape how gstack thinks, recommends, and builds.
